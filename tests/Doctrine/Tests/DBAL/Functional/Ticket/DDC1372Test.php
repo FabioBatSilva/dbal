@@ -52,7 +52,7 @@ class DDC1372Test extends \Doctrine\Tests\DbalFunctionalTestCase
             
             array(
                 'SELECT * FROM ddc1372_foobar f WHERE f.bar IN (:bar) AND f.foo = :foo',
-                array('foo'=>1,'bar'=> array(1, 2, 3)),
+                array('foo'=>1,'bar'=> array('1', '2', '3')),
                 array('bar'=> Connection::PARAM_STR_ARRAY,'foo'=>PDO::PARAM_INT),
                 array(
                     array('id'=>1,'foo'=>1,'bar'=>1),
@@ -68,6 +68,34 @@ class DDC1372Test extends \Doctrine\Tests\DbalFunctionalTestCase
                 array(
                     array('id'=>1,'foo'=>1,'bar'=>1),
                     array('id'=>2,'foo'=>1,'bar'=>2),
+                    array('id'=>3,'foo'=>1,'bar'=>3),
+                    array('id'=>4,'foo'=>1,'bar'=>4),
+                )
+            ),
+            
+            array(
+                'SELECT * FROM ddc1372_foobar f WHERE f.bar IN (:bar) AND f.foo IN (:foo)',
+                array('foo'=>1,'bar'=> 2),
+                array('bar'=>PDO::PARAM_INT,'foo'=>PDO::PARAM_INT),
+                array(
+                    array('id'=>2,'foo'=>1,'bar'=>2),
+                )
+            ),
+            
+            array(
+                'SELECT * FROM ddc1372_foobar f WHERE f.bar = :arg AND f.foo <> :arg',
+                array('arg'=>'1'),
+                array('arg'=>PDO::PARAM_STR),
+                array(
+                    array('id'=>5,'foo'=>2,'bar'=>1),
+                )
+            ),
+            
+            array(
+                'SELECT * FROM ddc1372_foobar f WHERE f.bar NOT IN (:arg) AND f.foo IN (:arg)',
+                array('arg'=>array(1, 2)),
+                array('arg'=>Connection::PARAM_INT_ARRAY),
+                array(
                     array('id'=>3,'foo'=>1,'bar'=>3),
                     array('id'=>4,'foo'=>1,'bar'=>4),
                 )
