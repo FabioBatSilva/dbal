@@ -2,6 +2,7 @@
 
 namespace Doctrine\Tests\DBAL\Functional;
 
+use Doctrine\DBAL\Query\Parameter;
 use Doctrine\DBAL\Types\Type;
 use Doctrine\DBAL\Connection;
 use PDO;
@@ -231,6 +232,108 @@ class DataAccessTest extends \Doctrine\Tests\DbalFunctionalTestCase
         $this->assertEquals('foo', $row['test_string']);
         $this->assertEquals(1, $row[0]);
         $this->assertEquals('foo', $row[1]);
+    }
+
+    public function testExecuteSqlQuery()
+    {
+        $this->assertStatement(
+            $this->_conn->executeSqlQuery('SELECT test_int, test_string FROM fetch_table'),
+            array(array(
+                'test_int' => 1,
+                'test_string' => 'foo'
+            ))
+        );
+        $this->assertQueryLog(
+            'SELECT test_int, test_string FROM fetch_table',
+            end($this->_sqlLoggerStack->queries)
+        );
+
+        $this->assertStatement(
+            $this->_conn->executeSqlQuery(
+                'SELECT test_int, test_string FROM fetch_table WHERE test_int IN (?)',
+                array(new Parameter(array(1, 2, 3), PDO::PARAM_INT))
+            ),
+            array(array(
+                'test_int' => 1,
+                'test_string' => 'foo'
+            ))
+        );
+        $this->assertQueryLog(
+            'SELECT test_int, test_string FROM fetch_table WHERE test_int IN (?, ?, ?)',
+            end($this->_sqlLoggerStack->queries),
+            array(1,2,3),
+            array(PDO::PARAM_INT, PDO::PARAM_INT, PDO::PARAM_INT)
+        );
+
+        $this->assertStatement(
+            $this->_conn->executeSqlQuery(
+                'SELECT test_int, test_string FROM fetch_table WHERE test_datetime IN (?)',
+                array(new Parameter(array(new \DateTime('2010-01-01 10:10:10'), new \DateTime('2012-12-12 12:12:12')), Type::DATETIME))
+            ),
+            array(array(
+                'test_int' => 1,
+                'test_string' => 'foo'
+            ))
+        );
+        $this->assertQueryLog(
+            'SELECT test_int, test_string FROM fetch_table WHERE test_datetime IN (?, ?)',
+            end($this->_sqlLoggerStack->queries),
+            array('2010-01-01 10:10:10', '2012-12-12 12:12:12'),
+            array(PDO::PARAM_STR, PDO::PARAM_STR)
+        );
+
+        $this->assertStatement(
+            $this->_conn->executeSqlQuery(
+                'SELECT test_int, test_string FROM fetch_table WHERE test_datetime IN (:date) OR test_datetime IN (:string)',
+                array(
+                    'date'   => new Parameter(array(new \DateTime('2010-01-01 10:10:10'), new \DateTime('2012-12-12 12:12:12')), Type::DATETIME),
+                    'string' => new Parameter(array('2010-01-01 10:10:10', '2012-12-12 12:12:12'), \PDO::PARAM_STR)
+                )
+            ),
+            array(array(
+                'test_int' => 1,
+                'test_string' => 'foo'
+            ))
+        );
+        $this->assertQueryLog(
+            'SELECT test_int, test_string FROM fetch_table WHERE test_datetime IN (?, ?) OR test_datetime IN (?, ?)',
+            end($this->_sqlLoggerStack->queries),
+            array('2010-01-01 10:10:10', '2012-12-12 12:12:12', '2010-01-01 10:10:10', '2012-12-12 12:12:12'),
+            array(PDO::PARAM_STR, PDO::PARAM_STR, PDO::PARAM_STR, PDO::PARAM_STR)
+        );
+    }
+
+    public function testExecuteSqlUpdate()
+    {
+        $date     = '2013-03-17 00:28:28';
+        $datetime = new \DateTime($date);
+        $sql      = 'INSERT INTO fetch_table (test_int, test_string, test_datetime) VALUES (?, ?, ?)';
+        $affected = $this->_conn->executeSqlUpdate($sql, array(
+            new Parameter(4321, PDO::PARAM_INT),
+            new Parameter('foo', \PDO::PARAM_STR),
+            new Parameter($datetime, Type::DATETIME),
+        ));
+
+        $this->assertEquals(1, $affected);
+        $this->assertQueryLog(
+            'INSERT INTO fetch_table (test_int, test_string, test_datetime) VALUES (?, ?, ?)',
+            end($this->_sqlLoggerStack->queries),
+            array(4321, 'foo', $date),
+            array(PDO::PARAM_INT, PDO::PARAM_STR, PDO::PARAM_STR)
+        );
+
+        $sql      = 'DELETE FROM fetch_table WHERE test_datetime IN (:date)';
+        $affected = $this->_conn->executeSqlUpdate($sql, array(
+            'date'   => new Parameter($datetime, Type::DATETIME),
+        ));
+
+        $this->assertEquals(1, $affected);
+        $this->assertQueryLog(
+            'DELETE FROM fetch_table WHERE test_datetime IN (?)',
+            end($this->_sqlLoggerStack->queries),
+            array($date),
+            array(PDO::PARAM_STR)
+        );
     }
 
     public function testFetchRow()
@@ -566,6 +669,34 @@ class DataAccessTest extends \Doctrine\Tests\DbalFunctionalTestCase
         if ('mysqli' == $this->_conn->getDriver()->getName()) {
             $this->markTestSkipped('Mysqli driver dont support this feature.');
         }
+    }
+
+    /**
+     * @param \Doctrine\DBAL\Driver\Statement $sttm
+     * @param mixed $expectedResult
+     */
+    private function assertStatement($sttm, $expectedResult = null)
+    {
+        $this->assertInstanceOf('\Doctrine\DBAL\Driver\Statement', $sttm);
+
+        if ($expectedResult === null) {
+            return;
+        }
+
+        $actualResult = $sttm->fetchAll();
+
+        if (is_array($expectedResult) && is_array($actualResult)) {
+            $actualResult = array_change_key_case($actualResult, \CASE_LOWER);
+        }
+
+        $this->assertEquals($expectedResult, $actualResult);
+    }
+
+    private function assertQueryLog($query, array $queryLog = array(), $params = array(), $types = array())
+    {
+        $this->assertEquals($query, $queryLog['sql']);
+        $this->assertEquals($params, $queryLog['params']);
+        $this->assertEquals($types, $queryLog['types']);
     }
 }
 

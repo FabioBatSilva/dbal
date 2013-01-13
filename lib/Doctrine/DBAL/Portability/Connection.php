@@ -93,9 +93,20 @@ class Connection extends \Doctrine\DBAL\Connection
         return $this->case;
     }
 
+    /**
+     * {@inheritdoc}
+     */
     public function executeQuery($query, array $params = array(), $types = array(), QueryCacheProfile $qcp = null)
     {
         return new Statement(parent::executeQuery($query, $params, $types, $qcp), $this);
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function executeSqlQuery($sql, array $parameters = array(), QueryCacheProfile $cacheProfile = null)
+    {
+        return new Statement(parent::executeSqlQuery($sql, $parameters, $cacheProfile), $this);
     }
 
     /**
@@ -109,6 +120,9 @@ class Connection extends \Doctrine\DBAL\Connection
         return new Statement(parent::prepare($statement), $this);
     }
 
+    /**
+     * {@inheritdoc}
+     */
     public function query()
     {
         $this->connect();

@@ -29,6 +29,9 @@ use PDO, Closure, Exception,
     Doctrine\DBAL\Cache\ArrayStatement,
     Doctrine\DBAL\Cache\CacheException;
 
+use Doctrine\DBAL\Query\Sql;
+use Doctrine\DBAL\Query\Parameter;
+
 /**
  * A wrapper around a Doctrine\DBAL\Driver\Connection that adds features like
  * events, transaction isolation levels, configuration, emulated transaction nesting,
@@ -378,7 +381,11 @@ class Connection implements DriverConnection
      */
     public function fetchAssoc($statement, array $params = array())
     {
-        return $this->executeQuery($statement, $params)->fetch(PDO::FETCH_ASSOC);
+        if ( ! empty($params)) {
+            $params = Parameter::createParameters($params);
+        }
+
+        return $this->executeSqlQuery($statement, $params)->fetch(PDO::FETCH_ASSOC);
     }
 
     /**
@@ -391,7 +398,11 @@ class Connection implements DriverConnection
      */
     public function fetchArray($statement, array $params = array())
     {
-        return $this->executeQuery($statement, $params)->fetch(PDO::FETCH_NUM);
+        if ( ! empty($params)) {
+            $params = Parameter::createParameters($params);
+        }
+
+        return $this->executeSqlQuery($statement, $params)->fetch(PDO::FETCH_NUM);
     }
 
     /**
@@ -405,7 +416,11 @@ class Connection implements DriverConnection
      */
     public function fetchColumn($statement, array $params = array(), $colnum = 0)
     {
-        return $this->executeQuery($statement, $params)->fetchColumn($colnum);
+        if ( ! empty($params)) {
+            $params = Parameter::createParameters($params);
+        }
+
+        return $this->executeSqlQuery($statement, $params)->fetchColumn($colnum);
     }
 
     /**
@@ -582,7 +597,11 @@ class Connection implements DriverConnection
      */
     public function fetchAll($sql, array $params = array(), $types = array())
     {
-        return $this->executeQuery($sql, $params, $types)->fetchAll();
+        if ( ! empty($params)) {
+            $params = Parameter::createParameters($params, $types);
+        }
+
+        return $this->executeSqlQuery($sql, $params)->fetchAll();
     }
 
     /**
@@ -621,33 +640,89 @@ class Connection implements DriverConnection
      */
     public function executeQuery($query, array $params = array(), $types = array(), QueryCacheProfile $qcp = null)
     {
+        $parameters = array();
+        $sql        = new Sql($query);
+
+        if ( ! empty($params)) {
+            $parameters = Parameter::createParameters($params, $types);
+        }
+
         if ($qcp !== null) {
-            return $this->executeCacheQuery($query, $params, $types, $qcp);
+            return $this->executeCacheSqlQuery($sql, $parameters, $qcp);
+        }
+
+        return $this->executeSqlQuery($sql, $parameters, $qcp);
+    }
+
+    /**
+     * Execute a caching query and
+     *
+     * @param string $query
+     * @param array $params
+     * @param array $types
+     * @param QueryCacheProfile $qcp
+     * @return \Doctrine\DBAL\Driver\ResultStatement
+     */
+    public function executeCacheQuery($query, $params, $types, QueryCacheProfile $qcp)
+    {
+        $sql        = new Sql($query);
+        $parameters = array();
+
+        if ( ! empty($params)) {
+            $parameters = Parameter::createParameters($params, $types);
+        }
+
+        return $this->executeCacheSqlQuery($sql, $parameters, $qcp);
+    }
+
+    /**
+     * Executes an, optionally parametrized, SQL query.
+     *
+     * If the query is parametrized, a prepared statement is used.
+     * If an SQLLogger is configured, the execution is logged.
+     *
+     * @param string|\Doctrine\DBAL\Query\Sql           $sql            The SQL query to execute.
+     * @param array<\Doctrine\DBAL\Query\Parameter>     $parameters     The parameters to bind to the query, if any.
+     * @param \Doctrine\DBAL\Cache\QueryCacheProfile    $cacheProfile   The Query Cache Profile.
+     *
+     * @return \Doctrine\DBAL\Driver\Statement The executed statement.
+     */
+    public function executeSqlQuery($sql, array $parameters = array(), QueryCacheProfile $cacheProfile = null)
+    {
+        if ($cacheProfile !== null) {
+            return $this->executeCacheSqlQuery($sql, $parameters);
         }
 
         $this->connect();
 
-        $logger = $this->_config->getSQLLogger();
-        if ($logger) {
-            $logger->startQuery($query, $params, $types);
+        if ( ! $sql instanceof Sql) {
+            $sql = new Sql($sql);
+        }
+
+        if ( ! empty($parameters)) {
+            $sql->setParameters($parameters);
+        }
+
+        $logger         = $this->_config->getSQLLogger();
+        $isParametrized = $sql->isParametrized();
+
+        if ($logger !== null) {
+            $logger->startQuery($sql->getBindingQuery(), $sql->getBindingValues($this->_platform), $sql->getBindingTypes());
         }
 
         try {
-            if ($params) {
-                list($query, $params, $types) = SQLParserUtils::expandListParameters($query, $params, $types);
 
-                $stmt = $this->_conn->prepare($query);
-                if ($types) {
-                    $this->_bindTypedValues($stmt, $params, $types);
-                    $stmt->execute();
-                } else {
-                    $stmt->execute($params);
-                }
-            } else {
-                $stmt = $this->_conn->query($query);
+            $query = $sql->getBindingQuery();
+            $stmt  = $isParametrized
+                ? $this->_conn->prepare($query)
+                : $this->_conn->query($query);
+
+            if ($isParametrized) {
+                $sql->bindStatement($this->_platform, $stmt)->execute();
             }
+
         } catch (\Exception $ex) {
-            throw DBALException::driverExceptionDuringQuery($ex, $query, $this->resolveParams($params, $types));
+            throw DBALException::driverExceptionDuringQuery($ex, $sql, $sql->getBindingValues($this->_platform));
         }
 
         $stmt->setFetchMode($this->_defaultFetchMode);
@@ -662,23 +737,33 @@ class Connection implements DriverConnection
     /**
      * Execute a caching query and
      *
-     * @param string $query
-     * @param array $params
-     * @param array $types
-     * @param QueryCacheProfile $qcp
-     * @return \Doctrine\DBAL\Driver\ResultStatement
+     * @param string|\Doctrine\DBAL\Query\Sql           $sql            The SQL query to execute.
+     * @param array<\Doctrine\DBAL\Query\Parameter>     $parameters     The parameters to bind to the query, if any.
+     * @param \Doctrine\DBAL\Cache\QueryCacheProfile    $cacheProfile   The Query Cache Profile.
+     *
+     * @return \Doctrine\DBAL\Driver\Statement The executed statement.
      */
-    public function executeCacheQuery($query, $params, $types, QueryCacheProfile $qcp)
+    public function executeCacheSqlQuery($sql, array $parameters, QueryCacheProfile $qcp)
     {
-        $resultCache = $qcp->getResultCacheDriver() ?: $this->_config->getResultCacheImpl();
-        if ( ! $resultCache) {
+        $stmt   = null;
+        $cache  = $qcp->getResultCacheDriver() ?: $this->_config->getResultCacheImpl();
+        
+        if ($cache === null) {
             throw CacheException::noResultDriverConfigured();
         }
 
-        list($cacheKey, $realKey) = $qcp->generateCacheKeys($query, $params, $types);
+        if ( ! $sql instanceof Sql) {
+            $sql = new Sql($sql);
+        }
+
+        if ( ! empty($parameters)) {
+            $sql->setParameters($parameters);
+        }
+
+        list($cacheKey, $realKey) = $qcp->generateCacheKeys($sql->getBindingQuery(), $sql->getBindingValues($this->_platform), $sql->getBindingTypes());
 
         // fetch the row pointers entry
-        if ($data = $resultCache->fetch($cacheKey)) {
+        if (($data = $cache->fetch($cacheKey))) {
             // is the real key part of this row pointers map or is the cache only pointing to other cache keys?
             if (isset($data[$realKey])) {
                 $stmt = new ArrayStatement($data[$realKey]);
@@ -687,8 +772,8 @@ class Connection implements DriverConnection
             }
         }
 
-        if (!isset($stmt)) {
-            $stmt = new ResultCacheStatement($this->executeQuery($query, $params, $types), $resultCache, $cacheKey, $realKey, $qcp->getLifetime());
+        if ($stmt === null) {
+            $stmt = new ResultCacheStatement($this->executeSqlQuery($sql), $cache, $cacheKey, $realKey, $qcp->getLifetime());
         }
 
         $stmt->setFetchMode($this->_defaultFetchMode);
@@ -710,7 +795,8 @@ class Connection implements DriverConnection
     public function project($query, array $params, Closure $function)
     {
         $result = array();
-        $stmt = $this->executeQuery($query, $params ?: array());
+        $params = empty($params) ? array() : Parameter::createParameters($params);
+        $stmt   = $this->executeSqlQuery($query, $params);
 
         while ($row = $stmt->fetch()) {
             $result[] = $function($row);
@@ -768,30 +854,59 @@ class Connection implements DriverConnection
      */
     public function executeUpdate($query, array $params = array(), array $types = array())
     {
+        $sql = new Sql($query);
+
+        if (empty($params)) {
+            return $this->executeSqlUpdate($sql);
+        }
+
+        return $this->executeSqlUpdate($sql, Parameter::createParameters($params, $types));
+    }
+
+    /**
+     * Executes an SQL INSERT/UPDATE/DELETE query with the given parameters and returns the number of affected rows.
+     *
+     * This method supports PDO binding types as well as DBAL mapping types.
+     *
+     * @param string|\Doctrine\DBAL\Query\Sql           $sql            The SQL query to execute.
+     * @param array<\Doctrine\DBAL\Query\Parameter>     $parameters     The parameters to bind to the query, if any.
+     *
+     * @return integer The number of affected rows.
+     */
+    public function executeSqlUpdate($sql, array $parameters = array())
+    {
         $this->connect();
 
-        $logger = $this->_config->getSQLLogger();
-        if ($logger) {
-            $logger->startQuery($query, $params, $types);
+        if ( ! $sql instanceof Sql) {
+            $sql = new Sql($sql);
+        }
+
+        if ( ! empty($parameters)) {
+            $sql->setParameters($parameters);
+        }
+
+        $logger         = $this->_config->getSQLLogger();
+        $isParametrized = $sql->isParametrized();
+
+        if ($logger !== null) {
+            $logger->startQuery($sql->getBindingQuery(), $sql->getBindingValues($this->_platform), $sql->getBindingTypes());
         }
 
         try {
-            if ($params) {
-                list($query, $params, $types) = SQLParserUtils::expandListParameters($query, $params, $types);
 
-                $stmt = $this->_conn->prepare($query);
-                if ($types) {
-                    $this->_bindTypedValues($stmt, $params, $types);
-                    $stmt->execute();
-                } else {
-                    $stmt->execute($params);
-                }
-                $result = $stmt->rowCount();
-            } else {
-                $result = $this->_conn->exec($query);
+            $query  = $sql->getBindingQuery();
+            $result = $isParametrized
+                ? $this->_conn->prepare($query)
+                : $this->_conn->exec($query);
+
+            if ($isParametrized) {
+                $sql->bindStatement($this->_platform, $result)->execute();
+
+                $result = $result->rowCount();
             }
+
         } catch (\Exception $ex) {
-            throw DBALException::driverExceptionDuringQuery($ex, $query, $this->resolveParams($params, $types));
+            throw DBALException::driverExceptionDuringQuery($ex, $sql, $sql->getBindingValues($this->_platform));
         }
 
         if ($logger) {
@@ -1185,48 +1300,6 @@ class Connection implements DriverConnection
     public function convertToPHPValue($value, $type)
     {
         return Type::getType($type)->convertToPHPValue($value, $this->_platform);
-    }
-
-    /**
-     * Binds a set of parameters, some or all of which are typed with a PDO binding type
-     * or DBAL mapping type, to a given statement.
-     *
-     * @param string $stmt The statement to bind the values to.
-     * @param array $params The map/list of named/positional parameters.
-     * @param array $types The parameter types (PDO binding types or DBAL mapping types).
-     * @internal Duck-typing used on the $stmt parameter to support driver statements as well as
-     *           raw PDOStatement instances.
-     */
-    private function _bindTypedValues($stmt, array $params, array $types)
-    {
-        // Check whether parameters are positional or named. Mixing is not allowed, just like in PDO.
-        if (is_int(key($params))) {
-            // Positional parameters
-            $typeOffset = array_key_exists(0, $types) ? -1 : 0;
-            $bindIndex = 1;
-            foreach ($params as $value) {
-                $typeIndex = $bindIndex + $typeOffset;
-                if (isset($types[$typeIndex])) {
-                    $type = $types[$typeIndex];
-                    list($value, $bindingType) = $this->getBindingInfo($value, $type);
-                    $stmt->bindValue($bindIndex, $value, $bindingType);
-                } else {
-                    $stmt->bindValue($bindIndex, $value);
-                }
-                ++$bindIndex;
-            }
-        } else {
-            // Named parameters
-            foreach ($params as $name => $value) {
-                if (isset($types[$name])) {
-                    $type = $types[$name];
-                    list($value, $bindingType) = $this->getBindingInfo($value, $type);
-                    $stmt->bindValue($name, $value, $bindingType);
-                } else {
-                    $stmt->bindValue($name, $value);
-                }
-            }
-        }
     }
 
     /**

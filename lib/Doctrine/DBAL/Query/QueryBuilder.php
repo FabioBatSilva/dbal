@@ -19,8 +19,9 @@
 
 namespace Doctrine\DBAL\Query;
 
-use Doctrine\DBAL\Query\Expression\CompositeExpression,
-    Doctrine\DBAL\Connection;
+use Doctrine\DBAL\Query\Expression\CompositeExpression;
+use Doctrine\DBAL\Query\Parameter;
+use Doctrine\DBAL\Connection;
 
 /**
  * QueryBuilder class is responsible to dynamically create SQL queries.
@@ -74,14 +75,9 @@ class QueryBuilder
     private $sql;
 
     /**
-     * @var array The query parameters.
+     * @var array<\Doctrine\DBAL\Query\Parameter> The query parameters.
      */
     private $params = array();
-
-    /**
-     * @var array The parameter type map of this query.
-     */
-    private $paramTypes = array();
 
     /**
      * @var integer The type of query this is. Can be select, update or delete.
@@ -182,10 +178,10 @@ class QueryBuilder
     public function execute()
     {
         if ($this->type == self::SELECT) {
-            return $this->connection->executeQuery($this->getSQL(), $this->params, $this->paramTypes);
-        } else {
-            return $this->connection->executeUpdate($this->getSQL(), $this->params, $this->paramTypes);
+            return $this->connection->executeQuery($this->getSQL(), $this->params);
         }
+
+        return $this->connection->executeUpdate($this->getSQL(), $this->params);
     }
 
     /**
@@ -247,11 +243,34 @@ class QueryBuilder
      */
     public function setParameter($key, $value, $type = null)
     {
-        if ($type !== null) {
-            $this->paramTypes[$key] = $type;
+        if( ! $value instanceof Parameter) {
+            $value = new Parameter($value, $type);
         }
 
         $this->params[$key] = $value;
+
+        return $this;
+    }
+
+    /**
+     * Sets a query parameter for the query being constructed.
+     *
+     * <code>
+     *     $qb = $conn->createQueryBuilder()
+     *         ->select('u')
+     *         ->from('users', 'u')
+     *         ->where('u.id IN (:ids)')
+     *         ->setParameter(':ids', new Parameter($ids, PDO::PARAM_INT));
+     * </code>
+     *
+     * @param string|integer                    $key        The parameter position or name.
+     * @param \Doctrine\DBAL\Query\Parameter    $parameter  The parameter value.
+     *
+     * @return \Doctrine\DBAL\Query\QueryBuilder This QueryBuilder instance.
+     */
+    public function setQueryParameter($key, Parameter $parameter)
+    {
+        $this->params[$key] = $parameter;
 
         return $this;
     }
@@ -276,8 +295,7 @@ class QueryBuilder
      */
     public function setParameters(array $params, array $types = array())
     {
-        $this->paramTypes = $types;
-        $this->params = $params;
+        $this->params = Parameter::createParameters($params, $types);
 
         return $this;
     }
@@ -289,7 +307,9 @@ class QueryBuilder
      */
     public function getParameters()
     {
-        return $this->params;
+        return array_map(function($param){
+            return $param->getValue();
+        }, $this->params);
     }
 
     /**
@@ -300,7 +320,37 @@ class QueryBuilder
      */
     public function getParameter($key)
     {
-        return isset($this->params[$key]) ? $this->params[$key] : null;
+        if (isset($this->params[$key])) {
+            return $this->params[$key]->getValue();
+        }
+
+        return null;
+    }
+
+    /**
+     * Gets all defined query parameters for the query being constructed.
+     *
+     * @return array The currently defined query parameters.
+     */
+    public function getQueryParameters()
+    {
+        return $this->params;
+    }
+
+    /**
+     * Gets a (previously set) query parameter of the query being constructed.
+     *
+     * @param mixed $key The key (index or name) of the bound parameter.
+     * 
+     * @return \Doctrine\DBAL\Query\Parameter|null The value of the bound parameter.
+     */
+    public function getQueryParameter($key)
+    {
+        if (isset($this->params[$key])) {
+            return $this->params[$key];
+        }
+
+        return null;
     }
 
     /**

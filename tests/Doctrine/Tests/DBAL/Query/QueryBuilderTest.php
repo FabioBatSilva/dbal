@@ -2,8 +2,10 @@
 
 namespace Doctrine\Tests\DBAL\Query;
 
-use Doctrine\DBAL\Query\Expression\ExpressionBuilder,
-    Doctrine\DBAL\Query\QueryBuilder;
+use Doctrine\DBAL\Query\Expression\ExpressionBuilder;
+use Doctrine\DBAL\Query\QueryBuilder;
+use Doctrine\DBAL\Query\Parameter;
+use Doctrine\DBAL\Types\Type;
 
 require_once __DIR__ . '/../../TestInit.php';
 
@@ -33,6 +35,67 @@ class QueryBuilderTest extends \Doctrine\Tests\DbalTestCase
            ->from('users', 'u');
 
         $this->assertEquals('SELECT u.id FROM users u', (string) $qb);
+    }
+
+    public function testGetAndSetParameters()
+    {
+        $qb = new QueryBuilder($this->conn);
+
+        $qb->select('u.id')
+            ->from('users', 'u')
+            ->where('u.id = :id OR i.date IN (:dates)');
+
+        $id     = 1;
+        $dates  = array(
+            new \DateTime('2011-11-11 11:11:11'),
+            new \DateTime('2012-12-12 12:12:12')
+        );
+
+        $qb->setParameter('id', 1, \PDO::PARAM_INT);
+        $qb->setParameter('dates', $dates, Type::DATETIME);
+        $this->assertEquals($id, $qb->getParameter('id'));
+        $this->assertEquals($dates, $qb->getParameter('dates'));
+        $this->assertInstanceOf('Doctrine\DBAL\Query\Parameter', $qb->getQueryParameter('id'));
+        $this->assertInstanceOf('Doctrine\DBAL\Query\Parameter', $qb->getQueryParameter('dates'));
+        $this->assertEquals(\PDO::PARAM_INT, $qb->getQueryParameter('id')->getType());
+        $this->assertEquals(Type::DATETIME, $qb->getQueryParameter('dates')->getType());
+
+        $qb->setParameter('id', new Parameter($id, \PDO::PARAM_INT));
+        $qb->setParameter('dates', new Parameter($dates, Type::DATETIME));
+        $this->assertEquals($id, $qb->getParameter('id'));
+        $this->assertEquals($dates, $qb->getParameter('dates'));
+        $this->assertInstanceOf('Doctrine\DBAL\Query\Parameter', $qb->getQueryParameter('id'));
+        $this->assertInstanceOf('Doctrine\DBAL\Query\Parameter', $qb->getQueryParameter('dates'));
+        $this->assertEquals(\PDO::PARAM_INT, $qb->getQueryParameter('id')->getType());
+        $this->assertEquals(Type::DATETIME, $qb->getQueryParameter('dates')->getType());
+
+        $qb->setQueryParameter('id', new Parameter($id, \PDO::PARAM_INT));
+        $qb->setQueryParameter('dates', new Parameter($dates, Type::DATETIME));
+        $this->assertEquals($id, $qb->getParameter('id'));
+        $this->assertEquals($dates, $qb->getParameter('dates'));
+        $this->assertInstanceOf('Doctrine\DBAL\Query\Parameter', $qb->getQueryParameter('id'));
+        $this->assertInstanceOf('Doctrine\DBAL\Query\Parameter', $qb->getQueryParameter('dates'));
+        $this->assertEquals(\PDO::PARAM_INT, $qb->getQueryParameter('id')->getType());
+        $this->assertEquals(Type::DATETIME, $qb->getQueryParameter('dates')->getType());
+
+        $qb->setParameters(array(
+            'id'    => $id,
+            'dates' => $dates
+        ));
+        $this->assertEquals($id, $qb->getParameter('id'));
+        $this->assertEquals($dates, $qb->getParameter('dates'));
+
+        $qb->setParameters(array(
+            'id'    => new Parameter($id, \PDO::PARAM_INT),
+            'dates' => new Parameter($dates, Type::DATETIME)
+        ));
+        $this->assertEquals($id, $qb->getParameter('id'));
+        $this->assertEquals($dates, $qb->getParameter('dates'));
+        $this->assertInstanceOf('Doctrine\DBAL\Query\Parameter', $qb->getQueryParameter('id'));
+        $this->assertInstanceOf('Doctrine\DBAL\Query\Parameter', $qb->getQueryParameter('dates'));
+        $this->assertEquals(\PDO::PARAM_INT, $qb->getQueryParameter('id')->getType());
+        $this->assertEquals(Type::DATETIME, $qb->getQueryParameter('dates')->getType());
+
     }
 
     public function testSelectWithSimpleWhere()
