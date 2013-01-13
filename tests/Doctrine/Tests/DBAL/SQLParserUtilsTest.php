@@ -3,6 +3,7 @@
 namespace Doctrine\Tests\DBAL;
 
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\Types\Type;
 use Doctrine\DBAL\SQLParserUtils;
 
 require_once __DIR__ . '/../TestInit.php';
@@ -117,6 +118,15 @@ class SQLParserUtilsTest extends \Doctrine\Tests\DbalTestCase
                 'SELECT * FROM Foo WHERE foo IN (?)',
                 array(),
                 array()
+            ),
+            //  Positional : Type array DDC-2190
+            array(
+                "SELECT * FROM Foo WHERE foo IN (?)",
+                array(array(new \DateTime('2011-11-11'), new \DateTime('2012-12-12'))),
+                array(array(Type::DATE)),
+                'SELECT * FROM Foo WHERE foo IN (?, ?)',
+                array(new \DateTime('2011-11-11'), new \DateTime('2012-12-12')),
+                array(Type::DATE, Type::DATE)
             ),
             //  Named parameters : Very simple with param int
             array(

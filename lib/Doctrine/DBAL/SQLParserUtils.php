@@ -94,7 +94,7 @@ class SQLParserUtils
         foreach ($types as $name => $type) {
             ++$bindIndex;
 
-            if ($type !== Connection::PARAM_INT_ARRAY && $type !== Connection::PARAM_STR_ARRAY) {
+            if ($type !== Connection::PARAM_INT_ARRAY && $type !== Connection::PARAM_STR_ARRAY && ! is_array($type)) {
                 continue;
             }
 
@@ -130,12 +130,16 @@ class SQLParserUtils
                     array_slice($params, $needle + 1)
                 );
 
+                $type = is_array($types[$needle])
+                    ? reset($types[$needle]) // array needles are Doctrine\DBAL\Types\Type
+                    : $types[$needle] - Connection::ARRAY_PARAM_OFFSET; // array needles are at PDO::PARAM_* + 100
+
                 $types = array_merge(
                     array_slice($types, 0, $needle),
-                    array_fill(0, $count, $types[$needle] - Connection::ARRAY_PARAM_OFFSET), // array needles are at PDO::PARAM_* + 100
+                    array_fill(0, $count, $type),
                     array_slice($types, $needle + 1)
                 );
-
+                
                 $expandStr  = implode(", ", array_fill(0, $count, "?"));
                 $query      = substr($query, 0, $needlePos) . $expandStr . substr($query, $needlePos + 1);
 

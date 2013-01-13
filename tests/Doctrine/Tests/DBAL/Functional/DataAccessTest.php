@@ -341,6 +341,38 @@ class DataAccessTest extends \Doctrine\Tests\DbalFunctionalTestCase
     }
 
     /**
+     * @group DDC-2190
+     */
+    public function testSupportArrayType()
+    {
+        $this->_conn->executeUpdate("DELETE FROM fetch_table;");
+
+        for ($i = 0; $i < 10; $i++) {
+            $this->_conn->insert('fetch_table', array(
+                'test_int'      => $i,
+                'test_string'   => "foo-$i",
+                'test_datetime' => "2010-01-01 10:10:1$i")
+            );
+        }
+
+        $types  = array(array(Type::DATETIME));
+        $params = array(array(
+            new \DateTime('2010-01-01 10:10:10'),
+            new \DateTime('2010-01-01 10:10:11'),
+            new \DateTime('2010-01-01 10:10:12'),
+        ));
+
+        $stmt = $this->_conn->executeQuery('SELECT test_datetime FROM fetch_table WHERE test_datetime IN (?)', $params, $types);
+        $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $this->assertCount(3, $data);
+
+        $this->assertEquals('2010-01-01 10:10:10', $data[0]['test_datetime']);
+        $this->assertEquals('2010-01-01 10:10:11', $data[1]['test_datetime']);
+        $this->assertEquals('2010-01-01 10:10:12', $data[2]['test_datetime']);
+    }
+
+    /**
      * @group DDC-1014
      */
     public function testDateArithmetics()
