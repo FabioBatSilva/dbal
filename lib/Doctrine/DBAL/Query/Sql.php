@@ -67,7 +67,7 @@ class Sql
     }
 
     /**
-     * @return boolean TRUE if the query is parametrized.
+     * @return boolean TRUE if the query is parametrized; FALSE otherwise.
      */
     public function isParametrized()
     {
@@ -75,7 +75,7 @@ class Sql
     }
 
     /**
-     * @return boolean TRUE if the the parameters are positional.
+     * @return boolean TRUE if parameters are positional; FALSE otherwise.
      */
     public function isPositional()
     {
@@ -256,20 +256,21 @@ class Sql
             //Handle the current parameter.
             $param        = $parameters[$needle];
             $paramValue   = $param->getValue();
-            $count        = count($paramValue);
+            $paramType    = $param->getType();
+            $paramCount   = count($paramValue);
 
             //Expand the placeholde.
             $placeholder  = $param->getBindingPlaceholder();
             $query        = substr($query, 0, $position) . $placeholder . substr($query, $position + 1);
 
             // Expand larger by number of parameters minus the replaced needle.
-            $paramOffset += ($count - 1);
+            $paramOffset += ($paramCount - 1);
             $queryOffset += (strlen($placeholder) - 1);
 
             //Expand the array parameter
-            $expandedList = array_map(function($value) use ($param)
+            $expandedList = array_map(function($value) use ($paramType)
             {
-                return new Parameter($value, $param->getType());
+                return new Parameter($value, $paramType);
             }, $paramValue);
 
             //Merge the parameter list
@@ -327,10 +328,11 @@ class Sql
             }
 
             //Expand the array parameter
+            $paramType    = $param->getType();
             $paramValue   = $param->getValue();
-            $expandedList = array_map(function($value) use ($param)
+            $expandedList = array_map(function($value) use ($paramType)
             {
-                return new Parameter($value, $param->getType());
+                return new Parameter($value, $paramType);
             }, $paramValue);
 
             //Increase positions.
